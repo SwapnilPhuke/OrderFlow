@@ -1,34 +1,39 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Security.Cryptography;
 using System.Text;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using OrderFlow.Application.DTOs;
 using OrderFlow.Application.Interfaces;
 using OrderFlow.Domain.Entities;
-using OrderFlow.Infrastructure.Persistence;
 
 namespace OrderFlow.Infrastructure.Services;
 
 public class AuthService : IAuthService
 {
-    private readonly AppDbContext    _context;
-    private readonly IConfiguration  _config;
+    private readonly IUserRepository         _userRepository;
+    private readonly IRefreshTokenRepository _refreshTokenRepository;
+    private readonly IDateTimeProvider       _dateTime;
+    private readonly IConfiguration          _config;
 
-    public AuthService(AppDbContext context, IConfiguration config)
+    public AuthService(
+        IUserRepository         userRepository,
+        IRefreshTokenRepository refreshTokenRepository,
+        IDateTimeProvider       dateTime,
+        IConfiguration          config)
     {
-        _context = context;
-        _config  = config;
+        _userRepository         = userRepository;
+        _refreshTokenRepository = refreshTokenRepository;
+        _dateTime               = dateTime;
+        _config                 = config;
     }
 
     public async Task<AuthResponse?> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default)
     {
-        if (await _context.Users.AnyAsync(u => u.Username.ToLower() == request.Username.ToLower(), cancellationToken))
+        if (await _userRepository.GetByUsernameAsync(request.Username, cancellationToken) is not null)
             return null;
 
-        if (await _context.Users.AnyAsync(u => u.Email.ToLower() == request.Email.ToLower(), cancellationToken))
+        if (await _userRepository.GetByEmailAsync(request.Email, cancellationToken) is not null)
             return null;
 
         var user = new User
@@ -39,56 +44,40 @@ public class AuthService : IAuthService
             Role         = "Customer"
         };
 
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync(cancellationToken);
-
-        return await GenerateAuthResponse(user, cancellationToken);
+        var created = await _userRepository.CreateAsync(user, cancellationToken);
+        return await BuildAuthResponseAsync(created, cancellationToken);
     }
 
     public async Task<AuthResponse?> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
     {
-        var user = await _context.Users
-            .FirstOrDefaultAsync(u => u.Username.ToLower() == request.Username.ToLower(), cancellationToken);
+        var user = await _userRepository.GetByUsernameAsync(request.Username, cancellationToken);
 
-        if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        if (user is null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
             return null;
 
-        return await GenerateAuthResponse(user, cancellationToken);
+        return await BuildAuthResponseAsync(user, cancellationToken);
     }
 
     public async Task<AuthResponse?> RefreshTokenAsync(string refreshToken, CancellationToken cancellationToken = default)
     {
-        var token = await _context.RefreshTokens
-            .Include(r => r.User)
-            .FirstOrDefaultAsync(r => r.Token == refreshToken && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow, cancellationToken);
+        var token = await _refreshTokenRepository.GetActiveByTokenAsync(refreshToken, cancellationToken);
+        if (token is null) return null;
 
-        if (token == null)
-            return null;
-
-        token.IsRevoked = true;
-        await _context.SaveChangesAsync(cancellationToken);
-
-        return await GenerateAuthResponse(token.User!, cancellationToken);
+        await _refreshTokenRepository.RevokeAsync(token, cancellationToken);
+        return await BuildAuthResponseAsync(token.User!, cancellationToken);
     }
 
     public async Task LogoutAsync(string refreshToken, CancellationToken cancellationToken = default)
-    {
-        var token = await _context.RefreshTokens
-            .FirstOrDefaultAsync(r => r.Token == refreshToken, cancellationToken);
-
-        if (token != null)
-        {
-            token.IsRevoked = true;
-            await _context.SaveChangesAsync(cancellationToken);
-        }
-    }
+        => await _refreshTokenRepository.RevokeByTokenAsync(refreshToken, cancellationToken);
 
     // ─── private helpers ────────────────────────────────────────────────────
 
-    private async Task<AuthResponse> GenerateAuthResponse(User user, CancellationToken cancellationToken)
+    private async Task<AuthResponse> BuildAuthResponseAsync(User user, CancellationToken cancellationToken)
     {
         var (accessToken, expiresAt) = GenerateAccessToken(user);
-        var refreshToken             = await CreateRefreshTokenAsync(user.Id, cancellationToken);
+        var expDays                  = int.TryParse(_config["JwtSettings:RefreshTokenExpirationDays"], out var d) ? d : 7;
+        var newRefreshToken          = await _refreshTokenRepository.CreateAsync(
+                                           user.Id, _dateTime.UtcNow.AddDays(expDays), cancellationToken);
 
         return new AuthResponse
         {
@@ -97,7 +86,7 @@ public class AuthService : IAuthService
             Email        = user.Email,
             Role         = user.Role,
             Token        = accessToken,
-            RefreshToken = refreshToken,
+            RefreshToken = newRefreshToken,
             ExpiresAt    = expiresAt
         };
     }
@@ -111,34 +100,18 @@ public class AuthService : IAuthService
 
         var key    = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
         var creds  = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var expiry = DateTime.UtcNow.AddMinutes(expMinutes);
+        var expiry = _dateTime.UtcNow.AddMinutes(expMinutes);
 
         var claims = new[]
         {
-            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Sub,        user.Id.ToString()),
             new Claim(JwtRegisteredClaimNames.UniqueName, user.Username),
-            new Claim(JwtRegisteredClaimNames.Email, user.Email),
-            new Claim(ClaimTypes.Role, user.Role),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new Claim(JwtRegisteredClaimNames.Email,      user.Email),
+            new Claim(ClaimTypes.Role,                    user.Role),
+            new Claim(JwtRegisteredClaimNames.Jti,        Guid.NewGuid().ToString())
         };
 
         var token = new JwtSecurityToken(issuer, audience, claims, expires: expiry, signingCredentials: creds);
         return (new JwtSecurityTokenHandler().WriteToken(token), expiry);
-    }
-
-    private async Task<string> CreateRefreshTokenAsync(int userId, CancellationToken cancellationToken)
-    {
-        var expDays = int.TryParse(_config["JwtSettings:RefreshTokenExpirationDays"], out var d) ? d : 7;
-
-        var refreshToken = new RefreshToken
-        {
-            UserId    = userId,
-            Token     = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64)),
-            ExpiresAt = DateTime.UtcNow.AddDays(expDays)
-        };
-
-        _context.RefreshTokens.Add(refreshToken);
-        await _context.SaveChangesAsync(cancellationToken);
-        return refreshToken.Token;
     }
 }

@@ -55,11 +55,17 @@ public class ProductRepository : IProductRepository
 
     public async Task<bool> DecrementStockAsync(int productId, int quantity, CancellationToken cancellationToken = default)
     {
+        // WHERE Stock >= quantity ensures atomicity — prevents oversell under concurrency
         var rows = await _context.Products
             .Where(p => p.Id == productId && p.Stock >= quantity)
             .ExecuteUpdateAsync(s => s.SetProperty(p => p.Stock, p => p.Stock - quantity), cancellationToken);
         return rows > 0;
     }
+
+    public async Task RestoreStockAsync(int productId, int quantity, CancellationToken cancellationToken = default)
+        => await _context.Products
+            .Where(p => p.Id == productId)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.Stock, p => p.Stock + quantity), cancellationToken);
 
     public async Task<int> GetLowStockCountAsync(int threshold = 10, CancellationToken cancellationToken = default)
         => await _context.Products

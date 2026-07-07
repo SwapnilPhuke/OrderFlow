@@ -39,34 +39,44 @@ public class PlaceOrderCommandHandler : IRequestHandler<PlaceOrderCommand, ApiRe
         if (request.Items == null || request.Items.Count == 0)
             return ApiResponse<OrderResponseDto>.Fail("Order must contain at least one item.");
 
-        var orderItems = new List<OrderItem>();
+        var orderItems  = new List<OrderItem>();
+        var decremented = new List<(int ProductId, int Quantity)>(); // tracks atomically decremented stock for rollback
         decimal totalAmount = 0;
 
         foreach (var item in request.Items)
         {
             var product = await _productRepository.GetByIdAsync(item.ProductId, cancellationToken);
             if (product == null)
+            {
+                await RollbackStockAsync(decremented, cancellationToken);
                 return ApiResponse<OrderResponseDto>.Fail($"Product with ID {item.ProductId} was not found.");
+            }
 
             if (!product.IsActive)
+            {
+                await RollbackStockAsync(decremented, cancellationToken);
                 return ApiResponse<OrderResponseDto>.Fail($"Product '{product.Name}' is not available.");
+            }
 
-            if (product.Stock < item.Quantity)
-                return ApiResponse<OrderResponseDto>.Fail($"Insufficient stock for '{product.Name}'. Available: {product.Stock}, Requested: {item.Quantity}.");
+            // Atomic check-and-decrement at DB level prevents oversell under concurrent requests.
+            // DecrementStockAsync uses WHERE Stock >= quantity so no separate read-then-write race.
+            var success = await _productRepository.DecrementStockAsync(item.ProductId, item.Quantity, cancellationToken);
+            if (!success)
+            {
+                await RollbackStockAsync(decremented, cancellationToken);
+                return ApiResponse<OrderResponseDto>.Fail(
+                    $"Insufficient stock for '{product.Name}'. Please try again.");
+            }
 
+            decremented.Add((item.ProductId, item.Quantity));
             orderItems.Add(new OrderItem
             {
                 ProductId = item.ProductId,
-                Quantity = item.Quantity,
+                Quantity  = item.Quantity,
                 UnitPrice = product.Price
             });
 
             totalAmount += product.Price * item.Quantity;
-        }
-
-        foreach (var item in request.Items)
-        {
-            await _productRepository.DecrementStockAsync(item.ProductId, item.Quantity, cancellationToken);
         }
 
         var order = new Order
@@ -92,5 +102,11 @@ public class PlaceOrderCommandHandler : IRequestHandler<PlaceOrderCommand, ApiRe
         _logger.LogInformation("Order {OrderId} placed by user {UserId} for total {TotalAmount}", createdOrder.Id, request.UserId, totalAmount);
 
         return ApiResponse<OrderResponseDto>.Ok(dto, "Order placed successfully.");
+    }
+
+    private async Task RollbackStockAsync(List<(int ProductId, int Quantity)> items, CancellationToken cancellationToken)
+    {
+        foreach (var (productId, quantity) in items)
+            await _productRepository.RestoreStockAsync(productId, quantity, cancellationToken);
     }
 }

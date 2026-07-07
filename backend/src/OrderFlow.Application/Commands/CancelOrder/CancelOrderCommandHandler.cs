@@ -2,7 +2,6 @@ using MediatR;
 using Microsoft.Extensions.Logging;
 using OrderFlow.Application.Common;
 using OrderFlow.Application.Interfaces;
-using OrderFlow.Domain.Enums;
 
 namespace OrderFlow.Application.Commands.CancelOrder;
 
@@ -31,11 +30,8 @@ public class CancelOrderCommandHandler : IRequestHandler<CancelOrderCommand, Api
         if (!request.IsAdmin && order.UserId != request.UserId)
             return ApiResponse<bool>.Fail("You do not have permission to cancel this order.");
 
-        if (order.Status != OrderStatus.Pending && order.Status != OrderStatus.Processing)
-            return ApiResponse<bool>.Fail($"Cannot cancel an order with status '{order.Status}'. Only Pending or Processing orders can be cancelled.");
-
-        order.Status = OrderStatus.Cancelled;
-        order.UpdatedAt = DateTime.UtcNow;
+        try { order.Cancel(); }
+        catch (InvalidOperationException ex) { return ApiResponse<bool>.Fail(ex.Message); }
 
         await _orderRepository.UpdateAsync(order, cancellationToken);
 

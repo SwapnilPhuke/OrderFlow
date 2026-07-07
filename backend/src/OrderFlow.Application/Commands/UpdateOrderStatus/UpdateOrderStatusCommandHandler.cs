@@ -15,15 +15,6 @@ public class UpdateOrderStatusCommandHandler : IRequestHandler<UpdateOrderStatus
     private readonly IMapper _mapper;
     private readonly ILogger<UpdateOrderStatusCommandHandler> _logger;
 
-    private static readonly Dictionary<OrderStatus, HashSet<OrderStatus>> _validTransitions = new()
-    {
-        [OrderStatus.Pending] = new() { OrderStatus.Processing, OrderStatus.Cancelled },
-        [OrderStatus.Processing] = new() { OrderStatus.Shipped, OrderStatus.Cancelled },
-        [OrderStatus.Shipped] = new() { OrderStatus.Delivered },
-        [OrderStatus.Delivered] = new(),
-        [OrderStatus.Cancelled] = new()
-    };
-
     public UpdateOrderStatusCommandHandler(
         IOrderRepository orderRepository,
         ICacheService cacheService,
@@ -45,11 +36,8 @@ public class UpdateOrderStatusCommandHandler : IRequestHandler<UpdateOrderStatus
         if (!request.IsAdmin && order.UserId != request.UserId)
             return ApiResponse<OrderResponseDto>.Fail("You do not have permission to update this order.");
 
-        if (!_validTransitions.TryGetValue(order.Status, out var allowed) || !allowed.Contains(request.NewStatus))
-            return ApiResponse<OrderResponseDto>.Fail($"Cannot transition order from {order.Status} to {request.NewStatus}.");
-
-        order.Status = request.NewStatus;
-        order.UpdatedAt = DateTime.UtcNow;
+        try { order.UpdateStatus(request.NewStatus); }
+        catch (InvalidOperationException ex) { return ApiResponse<OrderResponseDto>.Fail(ex.Message); }
 
         await _orderRepository.UpdateAsync(order, cancellationToken);
 

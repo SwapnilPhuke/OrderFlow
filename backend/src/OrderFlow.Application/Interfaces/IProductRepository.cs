@@ -9,6 +9,8 @@ public interface IProductRepository
     Task<Product> CreateAsync(Product product, CancellationToken cancellationToken = default);
     Task<Product> UpdateAsync(Product product, CancellationToken cancellationToken = default);
     Task<bool> DecrementStockAsync(int productId, int quantity, CancellationToken cancellationToken = default);
+    /// <summary>Restores <paramref name="quantity"/> units back to stock (compensating action on order failure).</summary>
+    Task RestoreStockAsync(int productId, int quantity, CancellationToken cancellationToken = default);
     Task<int> GetTotalActiveCountAsync(CancellationToken cancellationToken = default);
     Task<int> GetLowStockCountAsync(int threshold = 10, CancellationToken cancellationToken = default);
 }
