@@ -1,6 +1,6 @@
 # OrderFlow — CQRS Order Management System
 
-[![CI](https://github.com/SwapnilPhuke/orderflow/actions/workflows/ci.yml/badge.svg)](https://github.com/SwapnilPhuke/orderflow/actions/workflows/ci.yml)
+[![CI](https://github.com/SwapnilPhuke/OrderFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/SwapnilPhuke/OrderFlow/actions/workflows/ci.yml)
 [![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://reactjs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
