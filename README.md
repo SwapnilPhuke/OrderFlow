@@ -118,8 +118,8 @@ flowchart TD
 ### Option A — Docker (recommended, starts everything)
 
 ```bash
-git clone https://github.com/SwapnilPhuke/orderflow.git
-cd orderflow
+git clone https://github.com/SwapnilPhuke/OrderFlow.git
+cd OrderFlow
 
 # Copy and configure environment
 cp .env.example .env
