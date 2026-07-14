@@ -1,0 +1,13 @@
+[build]
+  base    = "frontend"
+  command = "npm ci && npm run build"
+  publish = "frontend/build"
+
+[build.environment]
+  CI                  = "false"
+  REACT_APP_API_URL   = "https://orderflow-api.up.railway.app"
+
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
