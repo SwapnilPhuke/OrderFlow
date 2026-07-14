@@ -32,3 +32,6 @@ yarn-error.log*
 
 # Docker
 .dockerignore
+
+# Local Netlify folder
+.netlify

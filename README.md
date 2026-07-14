@@ -1,3 +1,9 @@
+## ?? Live Demo
+
+**Frontend:** https://orderflow-swapnil.netlify.app
+
+---
+
 # OrderFlow — CQRS Order Management System
 
 [![CI](https://github.com/SwapnilPhuke/OrderFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/SwapnilPhuke/OrderFlow/actions/workflows/ci.yml)
@@ -250,3 +256,4 @@ az webapp config appsettings set \
 # Frontend — Azure Static Web Apps or Vercel
 # Set REACT_APP_API_URL=https://orderflow-api.azurewebsites.net
 ```
+
